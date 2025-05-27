@@ -107,25 +107,27 @@ class SimpleAGVEnvironment:
         return obstacles_nearby
 
 class AdvancedAStarPlanner:
-    """增强的A*路径规划器"""
+    """增强的A*路径规划器 - 网格化移动"""
     
     def __init__(self, environment):
         self.env = environment
-        self.resolution = 0.3  # 减小网格分辨率以获得更精确的路径
+        self.resolution = 0.5  # 增大网格分辨率，使路径更规整
         self.last_plan_time = 0
         self.replan_interval = 1.0  # 重规划间隔
     
     def heuristic(self, a, b):
-        """启发式函数：欧几里得距离"""
-        return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+        """启发式函数：曼哈顿距离（适合网格移动）"""
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
     def get_neighbors(self, node):
-        """获取邻居节点"""
+        """获取邻居节点 - 只允许4个方向移动"""
         neighbors = []
+        # 只允许上、下、左、右四个方向移动
         directions = [
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1),           (0, 1),
-            (1, -1),  (1, 0),  (1, 1)
+            (0, 1),   # 上
+            (0, -1),  # 下
+            (-1, 0),  # 左
+            (1, 0)    # 右
         ]
         
         for dx, dy in directions:
@@ -133,14 +135,25 @@ class AdvancedAStarPlanner:
             new_y = node[1] + dy * self.resolution
             
             if not self.env.is_collision(new_x, new_y):
-                cost = self.resolution if dx == 0 or dy == 0 else self.resolution * math.sqrt(2)
+                cost = self.resolution  # 所有移动成本相同
                 neighbors.append(((new_x, new_y), cost))
         
         return neighbors
     
+    def _align_to_grid(self, point):
+        """将点对齐到网格"""
+        x, y = point
+        aligned_x = round(x / self.resolution) * self.resolution
+        aligned_y = round(y / self.resolution) * self.resolution
+        return (aligned_x, aligned_y)
+    
     def plan_path(self, start, goal):
-        """A*路径规划"""
-        print(f"开始路径规划: 从 ({start[0]:.1f}, {start[1]:.1f}) 到 ({goal[0]:.1f}, {goal[1]:.1f})")
+        """A*路径规划 - 网格化版本"""
+        # 将起点和终点对齐到网格
+        start = self._align_to_grid(start)
+        goal = self._align_to_grid(goal)
+        
+        print(f"开始网格化路径规划: 从 ({start[0]:.1f}, {start[1]:.1f}) 到 ({goal[0]:.1f}, {goal[1]:.1f})")
         
         open_set = []
         heapq.heappush(open_set, (0, start))
@@ -154,7 +167,7 @@ class AdvancedAStarPlanner:
             explored_nodes.append(current)
             
             if self.heuristic(current, goal) < self.resolution:
-                print(f"路径规划完成! 探索了 {len(explored_nodes)} 个节点")
+                print(f"网格化路径规划完成! 探索了 {len(explored_nodes)} 个节点")
                 # 重构路径
                 path = []
                 while current in came_from:
@@ -162,7 +175,7 @@ class AdvancedAStarPlanner:
                     current = came_from[current]
                 path.append(start)
                 path.reverse()
-                return self._smooth_path(path), explored_nodes
+                return self._optimize_grid_path(path), explored_nodes
             
             for neighbor, move_cost in self.get_neighbors(current):
                 tentative_g_score = g_score[current] + move_cost
@@ -176,40 +189,77 @@ class AdvancedAStarPlanner:
         print("未找到路径!")
         return None, explored_nodes
     
-    def _smooth_path(self, path):
-        """路径平滑处理"""
+    def _optimize_grid_path(self, path):
+        """优化网格路径 - 合并同方向的连续移动"""
         if len(path) < 3:
             return path
         
-        smoothed = [path[0]]
+        optimized = [path[0]]
+        
         i = 0
-        
         while i < len(path) - 1:
-            # 尝试直线连接到更远的点
-            for j in range(len(path) - 1, i + 1, -1):
-                if self._is_line_clear(path[i], path[j]):
-                    smoothed.append(path[j])
-                    i = j
+            current = path[i]
+            
+            # 找到同一方向上的最远点
+            direction = None
+            j = i + 1
+            
+            while j < len(path):
+                next_point = path[j]
+                
+                # 计算当前方向
+                dx = next_point[0] - current[0]
+                dy = next_point[1] - current[1]
+                
+                # 标准化方向
+                if abs(dx) > abs(dy):
+                    current_dir = (1 if dx > 0 else -1, 0)
+                else:
+                    current_dir = (0, 1 if dy > 0 else -1)
+                
+                if direction is None:
+                    direction = current_dir
+                elif direction != current_dir:
                     break
+                
+                # 检查直线路径是否安全
+                if not self._is_grid_line_clear(current, next_point):
+                    break
+                
+                j += 1
+            
+            # 添加最远的安全点
+            if j > i + 1:
+                optimized.append(path[j - 1])
+                i = j - 1
             else:
+                optimized.append(path[i + 1])
                 i += 1
-                if i < len(path):
-                    smoothed.append(path[i])
         
-        return smoothed
+        return optimized
     
-    def _is_line_clear(self, start, end):
-        """检查两点间直线是否无障碍"""
-        steps = int(self.heuristic(start, end) / (self.resolution / 2))
-        if steps == 0:
-            return True
+    def _is_grid_line_clear(self, start, end):
+        """检查网格线路径是否无障碍"""
+        # 确保是水平或垂直线
+        if start[0] != end[0] and start[1] != end[1]:
+            return False
         
-        for i in range(steps + 1):
-            t = i / steps
-            x = start[0] + t * (end[0] - start[0])
-            y = start[1] + t * (end[1] - start[1])
-            if self.env.is_collision(x, y):
-                return False
+        # 检查路径上的每个网格点
+        if start[0] == end[0]:  # 垂直线
+            y_start, y_end = sorted([start[1], end[1]])
+            y = y_start
+            while y <= y_end:
+                if self.env.is_collision(start[0], y):
+                    return False
+                y += self.resolution
+        else:  # 水平线
+            x_start, x_end = sorted([start[0], end[0]])
+            x = x_start
+            while x <= x_end:
+                if self.env.is_collision(x, start[1]):
+                    return False
+                x += self.resolution
+        
         return True
 
 class AGVNavigationVisualizer:
@@ -254,7 +304,13 @@ class AGVNavigationVisualizer:
         self.ax.set_xlim(0, self.env.width)
         self.ax.set_ylim(0, self.env.height)
         self.ax.set_aspect('equal')
-        self.ax.grid(True, alpha=0.3)
+        
+        # 绘制网格线
+        grid_resolution = self.planner.resolution
+        for x in np.arange(0, self.env.width + grid_resolution, grid_resolution):
+            self.ax.axvline(x, color='lightgray', alpha=0.3, linewidth=0.5)
+        for y in np.arange(0, self.env.height + grid_resolution, grid_resolution):
+            self.ax.axhline(y, color='lightgray', alpha=0.3, linewidth=0.5)
         
         # 绘制静态障碍物（货架）
         for ox, oy, ow, oh in self.env.obstacles:
@@ -293,61 +349,101 @@ class AGVNavigationVisualizer:
             self.ax.scatter(explored_x, explored_y, c='lightcoral', s=8, alpha=0.4, label='Explored Nodes')
         
         if self.path:
-            # 绘制规划路径
-            path_x = [point[0] for point in self.path]
-            path_y = [point[1] for point in self.path]
-            self.ax.plot(path_x, path_y, 'g-', linewidth=3, alpha=0.8, label='Planned Path')
+            # 绘制网格化路径 - 使用直角线段
+            for i in range(len(self.path) - 1):
+                start = self.path[i]
+                end = self.path[i + 1]
+                
+                # 绘制路径段
+                self.ax.plot([start[0], end[0]], [start[1], end[1]], 
+                           'g-', linewidth=4, alpha=0.8, solid_capstyle='round')
+                
+                # 在路径段上添加方向箭头
+                mid_x = (start[0] + end[0]) / 2
+                mid_y = (start[1] + end[1]) / 2
+                dx = end[0] - start[0]
+                dy = end[1] - start[1]
+                
+                if abs(dx) > 0.01 or abs(dy) > 0.01:
+                    # 标准化方向
+                    length = math.sqrt(dx**2 + dy**2)
+                    dx_norm = dx / length * 0.3
+                    dy_norm = dy / length * 0.3
+                    
+                    self.ax.arrow(mid_x - dx_norm/2, mid_y - dy_norm/2, 
+                                dx_norm, dy_norm,
+                                head_width=0.15, head_length=0.15, 
+                                fc='darkgreen', ec='darkgreen', alpha=0.8)
             
             # 绘制路径点
-            self.ax.scatter(path_x, path_y, c='green', s=25, alpha=0.8, zorder=5)
+            path_x = [point[0] for point in self.path]
+            path_y = [point[1] for point in self.path]
+            self.ax.scatter(path_x, path_y, c='green', s=40, alpha=0.9, 
+                          zorder=5, edgecolors='darkgreen', linewidth=1, label='Planned Path')
             
             # 标记当前目标点
             if self.path_index < len(self.path):
                 target = self.path[self.path_index]
-                self.ax.plot(target[0], target[1], 'yo', markersize=12, 
-                           markeredgecolor='orange', markeredgewidth=2, label='Current Target')
+                self.ax.plot(target[0], target[1], 'yo', markersize=15, 
+                           markeredgecolor='orange', markeredgewidth=3, label='Current Target')
     
     def draw_agv(self):
         """绘制AGV"""
         if self.agv_position:
             x, y = self.agv_position
             
-            # AGV主体
-            agv_rect = patches.Rectangle((x-0.4, y-0.6), 0.8, 1.2,
+            # AGV主体 - 方形设计更符合网格移动
+            agv_rect = patches.Rectangle((x-0.4, y-0.4), 0.8, 0.8,
                                        facecolor='blue', edgecolor='darkblue',
-                                       linewidth=2, alpha=0.8)
+                                       linewidth=3, alpha=0.9)
             self.ax.add_patch(agv_rect)
             
-            # AGV方向指示器
+            # AGV方向指示器 - 显示当前移动方向
             if self.path and self.path_index < len(self.path) - 1:
                 target = self.path[self.path_index + 1] if self.path_index + 1 < len(self.path) else self.path[-1]
                 dx = target[0] - x
                 dy = target[1] - y
-                if abs(dx) > 0.01 or abs(dy) > 0.01:
-                    length = math.sqrt(dx**2 + dy**2)
-                    arrow_end_x = x + (dx / length) * 0.6
-                    arrow_end_y = y + (dy / length) * 0.6
-                    arrow = patches.FancyArrowPatch((x, y), (arrow_end_x, arrow_end_y),
-                                                  arrowstyle='->', mutation_scale=20,
-                                                  color='white', linewidth=2)
-                    self.ax.add_patch(arrow)
+                
+                # 只显示主要方向的箭头
+                if abs(dx) > abs(dy):
+                    # 水平移动
+                    direction = 1 if dx > 0 else -1
+                    arrow_end_x = x + direction * 0.5
+                    arrow_end_y = y
+                else:
+                    # 垂直移动
+                    direction = 1 if dy > 0 else -1
+                    arrow_end_x = x
+                    arrow_end_y = y + direction * 0.5
+                
+                arrow = patches.FancyArrowPatch((x, y), (arrow_end_x, arrow_end_y),
+                                              arrowstyle='->', mutation_scale=25,
+                                              color='white', linewidth=3)
+                self.ax.add_patch(arrow)
             
             # 传感器范围
-            sensor_circle = patches.Circle((x, y), 3.0, fill=False, 
-                                         edgecolor='cyan', alpha=0.3, 
+            sensor_circle = patches.Circle((x, y), 2.5, fill=False, 
+                                         edgecolor='cyan', alpha=0.4, 
                                          linestyle='--', linewidth=2)
             self.ax.add_patch(sensor_circle)
             
-            # AGV轨迹
+            # AGV轨迹 - 显示网格化的移动轨迹
             if len(self.agv_trail) > 1:
-                trail_x = [pos[0] for pos in self.agv_trail]
-                trail_y = [pos[1] for pos in self.agv_trail]
-                self.ax.plot(trail_x, trail_y, 'b--', alpha=0.6, linewidth=2, label='AGV Trail')
+                for i in range(len(self.agv_trail) - 1):
+                    start = self.agv_trail[i]
+                    end = self.agv_trail[i + 1]
+                    self.ax.plot([start[0], end[0]], [start[1], end[1]], 
+                               'b--', alpha=0.6, linewidth=2)
+                
+                # 标记轨迹点
+                trail_x = [pos[0] for pos in self.agv_trail[::3]]  # 每3个点显示一个
+                trail_y = [pos[1] for pos in self.agv_trail[::3]]
+                self.ax.scatter(trail_x, trail_y, c='lightblue', s=15, alpha=0.7, label='AGV Trail')
             
             # AGV标签
-            self.ax.text(x, y-1.0, 'Main AGV', ha='center', va='top',
+            self.ax.text(x, y-0.8, 'Main AGV', ha='center', va='top',
                         fontsize=9, fontweight='bold', color='blue',
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9))
     
     def draw_start_goal(self):
         """绘制起点和终点"""
@@ -370,10 +466,10 @@ class AGVNavigationVisualizer:
             if self.path_index < len(self.path):
                 for i in range(self.path_index, len(self.path)-1):
                     p1, p2 = self.path[i], self.path[i+1]
-                    remaining_distance += math.sqrt((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2)
+                    remaining_distance += abs(p2[0]-p1[0]) + abs(p2[1]-p1[1])  # 曼哈顿距离
             
-            total_path_distance = sum(math.sqrt((self.path[i+1][0]-self.path[i][0])**2 + 
-                                              (self.path[i+1][1]-self.path[i][1])**2)
+            total_path_distance = sum(abs(self.path[i+1][0]-self.path[i][0]) + 
+                                    abs(self.path[i+1][1]-self.path[i][1])
                                     for i in range(len(self.path)-1))
             
             progress = ((total_path_distance - remaining_distance) / total_path_distance * 100) if total_path_distance > 0 else 0
@@ -386,18 +482,33 @@ class AGVNavigationVisualizer:
                 for obs in nearby_obstacles[:2]:  # 只显示最近的2个
                     obstacle_info += f"\n  {obs['type']} (ID:{obs['id']}) - {obs['distance']:.1f}m"
             
-            status = f"""AGV Navigation Status:
+            # 确定当前移动方向
+            current_direction = "Stationary"
+            if self.path_index < len(self.path) - 1:
+                current_pos = self.agv_position
+                target_pos = self.path[self.path_index + 1]
+                dx = target_pos[0] - current_pos[0]
+                dy = target_pos[1] - current_pos[1]
+                
+                if abs(dx) > abs(dy):
+                    current_direction = "→ East" if dx > 0 else "← West"
+                else:
+                    current_direction = "↑ North" if dy > 0 else "↓ South"
+            
+            status = f"""AGV Grid Navigation Status:
 Step: {self.step_count}
 Status: {self.navigation_status}
 Current Position: ({self.agv_position[0]:.1f}, {self.agv_position[1]:.1f})
 Goal Position: ({self.goal_position[0]:.1f}, {self.goal_position[1]:.1f})
+Current Direction: {current_direction}
 Progress: {progress:.1f}%
-Remaining Distance: {remaining_distance:.1f}m
-Path Points: {self.path_index}/{len(self.path)}
+Remaining Distance: {remaining_distance:.1f}m (Manhattan)
+Grid Waypoints: {self.path_index}/{len(self.path)}
 Total Distance Traveled: {self.total_distance:.1f}m
 Replanning Count: {self.replan_count}
 Collision Avoidance: {self.collision_count}
-Explored Nodes: {len(self.explored_nodes) if self.explored_nodes else 0}{obstacle_info}"""
+Explored Nodes: {len(self.explored_nodes) if self.explored_nodes else 0}
+Grid Resolution: {self.planner.resolution}m{obstacle_info}"""
             
             self.status_text.set_text(status)
     
@@ -493,35 +604,52 @@ Explored Nodes: {len(self.explored_nodes) if self.explored_nodes else 0}{obstacl
                 
                 self.last_replan_time = current_time
             
-            # 移动AGV
+            # 移动AGV - 网格化移动逻辑
             if self.path_index < len(self.path) - 1:
                 target = self.path[self.path_index + 1]
                 current = self.agv_position
                 
-                # 计算移动方向
+                # 计算移动方向 - 只允许水平或垂直移动
                 dx = target[0] - current[0]
                 dy = target[1] - current[1]
                 distance = math.sqrt(dx**2 + dy**2)
                 
-                if distance < 0.2:  # 接近路径点
+                if distance < 0.1:  # 接近路径点
+                    # 精确对齐到目标点
+                    self.agv_position = target
+                    self.agv_trail.append(self.agv_position)
                     self.path_index += 1
-                    print(f"  Reached waypoint {self.path_index}/{len(self.path)}")
+                    print(f"  Reached grid waypoint {self.path_index}/{len(self.path)} at ({target[0]:.1f}, {target[1]:.1f})")
                     if self.path_index >= len(self.path) - 1:
                         self.navigation_status = "Goal Reached"
                 else:
-                    # 移动向目标
-                    speed = 1.2  # m/s
+                    # 网格化移动 - 优先完成一个方向的移动
+                    speed = 1.0  # m/s
                     move_distance = speed * dt
-                    if move_distance > distance:
-                        move_distance = distance
                     
-                    new_x = current[0] + (dx / distance) * move_distance
-                    new_y = current[1] + (dy / distance) * move_distance
+                    # 确定主要移动方向
+                    if abs(dx) > abs(dy):
+                        # 水平移动优先
+                        direction = 1 if dx > 0 else -1
+                        move_x = min(abs(dx), move_distance) * direction
+                        new_x = current[0] + move_x
+                        new_y = current[1]
+                    else:
+                        # 垂直移动优先
+                        direction = 1 if dy > 0 else -1
+                        move_y = min(abs(dy), move_distance) * direction
+                        new_x = current[0]
+                        new_y = current[1] + move_y
                     
                     # 检查碰撞
                     if not self.env.is_collision(new_x, new_y):
                         self.agv_position = (new_x, new_y)
-                        self.agv_trail.append(self.agv_position)
+                        
+                        # 只在位置有明显变化时添加到轨迹
+                        if (len(self.agv_trail) == 0 or 
+                            abs(new_x - self.agv_trail[-1][0]) > 0.05 or 
+                            abs(new_y - self.agv_trail[-1][1]) > 0.05):
+                            self.agv_trail.append(self.agv_position)
                         
                         # 计算移动距离
                         move_dist = math.sqrt((new_x - last_position[0])**2 + (new_y - last_position[1])**2)
