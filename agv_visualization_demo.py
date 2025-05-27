@@ -37,7 +37,7 @@ class SimpleAGVEnvironment:
             (3, 3, 2, 8),   # 左侧货架1
             (7, 3, 2, 8),   # 左侧货架2
             (11, 3, 2, 8),  # 右侧货架1
-            (15, 3, 2, 7),  # 右侧货架2
+            (15, 3, 2, 8),  # 右侧货架2
             (3, 12, 2, 2),  # 上方小货架1
             (7, 12, 2, 2),  # 上方小货架2
             (11, 12, 2, 2), # 上方小货架3
@@ -48,9 +48,9 @@ class SimpleAGVEnvironment:
     def _setup_dynamic_obstacles(self):
         """设置动态障碍物"""
         self.dynamic_obstacles = [
-            {'x': 5.0, 'y': 8.0, 'vx': 0.3, 'vy': 0.0, 'radius': 0.4, 'type': 'Other AGV', 'id': 1},
-            {'x': 12.0, 'y': 6.0, 'vx': 0.0, 'vy': 0.2, 'radius': 0.3, 'type': 'Person', 'id': 2},
-            {'x': 8.0, 'y': 10.0, 'vx': -0.2, 'vy': 0.1, 'radius': 0.35, 'type': 'Other AGV', 'id': 3},
+            {'x': 5.0, 'y': 8.0, 'vx': 0.3, 'vy': 0.0, 'radius': 0.4, 'type': 'barrier', 'id': 1},
+            {'x': 12.0, 'y': 6.0, 'vx': 0.0, 'vy': 0.4, 'radius': 0.3, 'type': 'Person', 'id': 2},
+            {'x': 8.0, 'y': 10.0, 'vx': -0.2, 'vy': 0.1, 'radius': 0.35, 'type': 'barrier', 'id': 3},
         ]
     
     def update_dynamic_obstacles(self, dt):
@@ -286,7 +286,7 @@ class AGVNavigationVisualizer:
         self.navigation_status = "初始化"
         
         # 可视化设置
-        self.fig, self.ax = plt.subplots(figsize=(16, 12))
+        self.fig, self.ax = plt.subplots(figsize=(12, 9))
         self.ax.set_xlim(0, environment.width)
         self.ax.set_ylim(0, environment.height)
         self.ax.set_aspect('equal')
@@ -324,7 +324,7 @@ class AGVNavigationVisualizer:
         
         # 绘制动态障碍物
         for obs in self.env.dynamic_obstacles:
-            color = 'orange' if obs['type'] == 'Other AGV' else 'red'
+            color = 'orange' if obs['type'] == 'barrier' else 'red'
             circle = patches.Circle((obs['x'], obs['y']), obs['radius'],
                                   facecolor=color, alpha=0.6, edgecolor='black')
             self.ax.add_patch(circle)
@@ -544,7 +544,7 @@ Grid Resolution: {self.planner.resolution}m{obstacle_info}"""
         self.navigation_status = "Navigating"
         
         # 创建新图形
-        plt.figure(figsize=(16, 12))
+        plt.figure(figsize=(12, 9))
         self.fig = plt.gcf()
         self.ax = plt.gca()
         
@@ -725,7 +725,7 @@ def main():
         {
             "name": "Scenario 3: Complex Multi-Obstacle Environment",
             "start": (2.0, 13.0),
-            "goal": (16.0, 2.0),
+            "goal": (14.0, 6.0),
             "description": "AGV performs long-distance navigation in complex environment"
         }
     ]
